@@ -11,6 +11,17 @@
 char *history[HISTORY_SIZE];
 int history_index = 0;
 char inputBuffer[MAX_LINE]; /* buffer to hold command entered */
+pid_t foreground_pid = 0;
+
+void sigtstp_handler(int sig) {
+    printf("Received SIGTSTP signal\n");
+
+    if (foreground_pid > 0) {
+        printf("Killing the process %d\n", foreground_pid);
+        kill(foreground_pid, sig);
+        foreground_pid = 0;
+    }
+}
 
 void add_to_history(char *args[]) {
     /* shift history down one position */
@@ -115,7 +126,7 @@ void run_history(int index) {
         return;
     }
 
-    char *args[MAX_LINE/2 + 1];
+    char *args[MAX_LINE / 2 + 1];
     int ct = 0;
     char *token = strtok(history[index], " \t");
     while (token) {
@@ -139,40 +150,50 @@ void run_history(int index) {
 }
 
 int main(void) {
-    char inputBuffer[MAX_LINE]; /* buffer to hold command entered */
-    int background; /* equals 1 if a command is followed by '&' */
-    char *args[MAX_LINE/2 + 1]; /* command line arguments */
+    int background;
+    char *args[MAX_LINE/2 + 1];
+    int pid;
+    signal(SIGTSTP, sigtstp_handler);
 
     while (1) {
         background = 0;
         printf("myshell: ");
-        /* setup() calls exit() when Control-D is entered */
         setup(inputBuffer, args, &background);
 
-        if (strcmp(args[0], "history") == 0) {
-            if (args[1] && strcmp(args[1], "-i") == 0 && args[2]) {
-                int index = atoi(args[2]);
-                run_history(index);
+        /* check for built-in commands */
+        if (strcmp(args[0], "history") == 0 && args[1] && strcmp(args[1], "-i") == 0) {
+            int index = atoi(args[2]);
+            run_history(index);
+            continue;
+        } else if (strcmp(args[0], "history") == 0) {
+            print_history();
+            continue;
+        }
+
+        add_to_history(args);
+        /* fork a child process to execute the command */
+        pid = fork();
+        if (pid == 0) {
+            /* child process */
+            /* execute the command */
+            execvp(args[0], args);
+            perror("execvp");
+            exit(1);
+        } else if (pid > 0) {
+            /* parent process */
+            if (background == 0) {
+                foreground_pid = pid;
+                /* foreground process, wait for it to finish */
+                int status;
+                waitpid(pid, &status, WNOHANG);
             } else {
-                print_history();
+                /* background process, don't wait for it to finish */
+                printf("Background process %d started\n", pid);
             }
         } else {
-            add_to_history(args);
-            int pid = fork();
-            if (pid == 0) {
-                execvp(args[0], args);
-                perror("execvp");
-                exit(1);
-            } else if (pid > 0) {
-                if (!background) {
-                    int status;
-                    waitpid(pid, &status, 0);
-                }
-            } else {
-                perror("fork");
-            }
+            /* error occurred while forking */
+            perror("fork");
         }
     }
-
     return 0;
 }
