@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
 
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
 
@@ -64,13 +66,14 @@ void setup(char inputBuffer[], char *args[],int *background)
                 args[ct] = NULL; /* no more arguments to this command */
                 break;
 
+            case '&':                  /* background indicator */
+                *background = 1;
+                inputBuffer[i] = '\0';
+                break;
+
             default :             /* some other character */
                 if (start == -1)
                     start = i;
-                if (inputBuffer[i] == '&'){
-                    *background  = 1;
-                    inputBuffer[i-1] = '\0';
-                }
         } /* end of switch */
     }    /* end of for */
     args[ct] = NULL; /* just in case the input line was > 80 */
@@ -78,6 +81,8 @@ void setup(char inputBuffer[], char *args[],int *background)
     for (i = 0; i <= ct; i++)
         printf("args %d = %s\n",i,args[i]);
 } /* end of setup routine */
+
+
 
 int main(void)
 {
@@ -94,6 +99,29 @@ int main(void)
         (1) fork a child process using fork()
         (2) the child process will invoke execv()
         (3) if background == 0, the parent will wait,
-        otherwise it will invoke the setup() function again. */
+        otherwise it will invoke the setup() function again. **/
+
+        int pid = fork();
+        if (pid == 0) {
+            // Child process
+            char *path = getenv("PATH");
+            char *dir = strtok(path, ":");
+            while (dir != NULL) {
+                char executable[MAX_LINE];
+                snprintf(executable, MAX_LINE, "%s/%s", dir, args[0]);
+                execv(executable, args);
+                dir = strtok(NULL, ":");
+            }
+            // If execv returns, it means the command was not found in any of the directories in the PATH
+            perror("Command not found");
+            exit(1);
+        } else {
+            // Parent process
+            if (!background) {
+                int status;
+                waitpid(pid, &status, 0);
+            }
+        }
     }
 }
+
