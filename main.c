@@ -191,13 +191,43 @@ int main(void) {
             }
         }
 
-        /* check for built-in commands */
         if (strcmp(args[0], "history") == 0 && args[1] && strcmp(args[1], "-i") == 0) {
             int index = atoi(args[2]);
             run_history(index);
             continue;
         } else if (strcmp(args[0], "history") == 0) {
             print_history();
+            continue;
+        }
+
+        if (strcmp(args[0], "fg") == 0) {
+            // check if a process ID was specified
+            if (args[1] == NULL) {
+                printf("Error: no process ID specified\n");
+                continue;
+            }
+
+            // convert the process ID to an integer
+            int process_id = atoi(args[1]);
+
+            // check if the process ID is valid
+            int found = 0;
+            for (int i = 0; i < background_count; i++) {
+                if (background_pids[i] == process_id) {
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) {
+                printf("Error: invalid process ID\n");
+                continue;
+            }
+
+            // bring the specified background process to the foreground
+            int status;
+            kill(process_id, SIGCONT);
+            foreground_pid = process_id;
+            waitpid(process_id, &status, WUNTRACED);
             continue;
         }
 
@@ -218,7 +248,7 @@ int main(void) {
                 foreground_pid = pid;
                 /* foreground process, wait for it to finish */
                 int status;
-                waitpid(pid, &status, WNOHANG);
+                waitpid(pid, &status, WUNTRACED);
             } else {
                 /* background process, don't wait for it to finish */
                 printf("Background process %d started\n", pid);
