@@ -10,7 +10,6 @@
 #define MAX_BACKGROUND_PROCESSES 100
 
 char *history[HISTORY_SIZE];
-int history_index = 0;
 char inputBuffer[MAX_LINE]; /* buffer to hold command entered */
 pid_t foreground_pid = 0;
 
@@ -50,6 +49,21 @@ void print_history() {
     for (int i = 0; i < HISTORY_SIZE; i++) {
         if (history[i]) {
             printf("%d %s\n", i, history[i]);
+        }
+    }
+}
+
+void list_background_processes() {
+    for (int i = 0; i < background_count; i++) {
+        pid_t pid = background_pids[i];
+        int status;
+        pid_t result = waitpid(pid, &status, WNOHANG);
+        if (result == 0) {
+            printf("[%d] %d Running\n", i + 1, pid);
+        } else if (result == pid) {
+            printf("[%d] %d Done\n", i + 1, pid);
+        } else {
+            printf("[%d] %d Unknown\n", i + 1, pid);
         }
     }
 }
@@ -231,6 +245,11 @@ int main(void) {
             continue;
         }
 
+
+        if (strcmp(args[0], "jobs") == 0) {
+            list_background_processes();
+            continue;
+        }
 
 
         add_to_history(args);
