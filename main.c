@@ -7,11 +7,19 @@
 
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
 #define HISTORY_SIZE 10
+#define MAX_BACKGROUND_PROCESSES 100
 
 char *history[HISTORY_SIZE];
 int history_index = 0;
 char inputBuffer[MAX_LINE]; /* buffer to hold command entered */
 pid_t foreground_pid = 0;
+
+
+// global array to store the PIDs of all background processes
+pid_t background_pids[MAX_BACKGROUND_PROCESSES];
+
+// global counter for the number of background processes
+int background_count = 0;
 
 void sigtstp_handler(int sig) {
     printf("Received SIGTSTP signal\n");
@@ -160,6 +168,29 @@ int main(void) {
         printf("myshell: ");
         setup(inputBuffer, args, &background);
 
+        if (strcmp(args[0], "exit") == 0) {
+            // check if there are any background processes still running
+            int running_count = 0;
+            for (int i = 0; i < background_count; i++) {
+                int status;
+                pid_t pid = waitpid(background_pids[i], &status, WNOHANG);
+                if (pid == 0) {
+                    // background process is still running
+                    running_count++;
+                }
+            }
+
+            if (running_count > 0) {
+                // there are still background processes running
+                printf("There are still %d background processes running.\n", running_count);
+                printf("Please terminate all background processes before exiting.\n");
+                continue;
+            } else {
+                // no background processes are running, so exit the shell
+                exit(0);
+            }
+        }
+
         /* check for built-in commands */
         if (strcmp(args[0], "history") == 0 && args[1] && strcmp(args[1], "-i") == 0) {
             int index = atoi(args[2]);
@@ -169,6 +200,8 @@ int main(void) {
             print_history();
             continue;
         }
+
+
 
         add_to_history(args);
         /* fork a child process to execute the command */
@@ -189,6 +222,7 @@ int main(void) {
             } else {
                 /* background process, don't wait for it to finish */
                 printf("Background process %d started\n", pid);
+                background_pids[background_count++] = pid;
             }
         } else {
             /* error occurred while forking */
