@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
 #define HISTORY_SIZE 10
@@ -176,6 +177,9 @@ int main(void) {
     char *args[MAX_LINE/2 + 1];
     int pid;
     signal(SIGTSTP, sigtstp_handler);
+    int saved_stdout = dup(STDOUT_FILENO);
+    int saved_stderr = dup(STDERR_FILENO);
+    int saved_stdin = dup(STDIN_FILENO);
 
     while (1) {
         background = 0;
@@ -251,6 +255,87 @@ int main(void) {
             continue;
         }
 
+        int input_redirect = 0, output_redirect = 0, append_redirect = 0, error_redirect = 0;
+
+        char *input_file = NULL, *output_file = NULL, *error_file = NULL;
+        int i;
+        for (i = 0; args[i] != NULL; i++) {
+            if (strcmp(args[i], "<") == 0) {
+                input_redirect = 1;
+                input_file = args[i + 1];
+
+                for (int j = i; args[j] != NULL; j++) {
+                    args[j] = args[j + 2];
+                }
+            } else if (strcmp(args[i], ">") == 0) {
+                output_redirect = 1;
+                output_file = args[i + 1];
+                args[i] = NULL;
+            } else if (strcmp(args[i], ">>") == 0) {
+                append_redirect = 1;
+                output_file = args[i + 1];
+                args[i] = NULL;
+            } else if (strcmp(args[i], "2>") == 0) {
+                error_redirect = 1;
+                error_file = args[i + 1];
+                args[i] = NULL;
+            }
+        }
+
+        if (input_redirect) {
+            int fd = open(input_file, O_RDONLY);
+            if (fd == -1) {
+                perror("open");
+                exit(1);
+            }
+            if (dup2(fd, STDIN_FILENO) == -1) {
+                perror("dup2");
+                exit(1);
+            }
+
+            if(close(fd) == -1){
+                fprintf(stderr, "%s", "Failed to close the input file\n");
+                exit(1);
+            }
+        }
+        if (output_redirect) {
+            int fd;
+            if (append_redirect) {
+                fd = open(output_file, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+            } else {
+                fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+            }
+            if (fd == -1) {
+                perror("open");
+                exit(1);
+            }
+            if (dup2(fd, STDOUT_FILENO) == -1) {
+                perror("dup2");
+                exit(1);
+            }
+
+            if(close(fd) == -1){
+                fprintf(stderr, "%s", "Failed to close the input file\n");
+                exit(1);
+            }
+        }
+        if (error_redirect) {
+            int fd = open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+            if (fd == -1) {
+                perror("open");
+                exit(1);
+            }
+            if (dup2(fd, STDERR_FILENO) == -1) {
+                perror("dup2");
+                exit(1);
+            }
+
+            if(close(fd) == -1){
+                fprintf(stderr, "%s", "Failed to close the input file\n");
+                exit(1);
+            }
+        }
+
 
         add_to_history(args);
         /* fork a child process to execute the command */
@@ -277,6 +362,16 @@ int main(void) {
             /* error occurred while forking */
             perror("fork");
         }
+
+        // restore stdout and stderr to their default values
+        dup2(saved_stdout, STDOUT_FILENO);
+        dup2(saved_stderr, STDERR_FILENO);
+        dup2(saved_stdin, STDIN_FILENO);
+
+        // close the file descriptors
+        close(saved_stdout);
+        close(saved_stderr);
+        close(saved_stdin);
     }
     return 0;
 }
