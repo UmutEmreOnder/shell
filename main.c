@@ -32,8 +32,7 @@ ioRedirection(int input_redirect, int output_redirect, int append_redirect, int 
 void exitCall();
 
 //This function takes a program name and check it if it is executable or not.
-int checkExecutable(const char *filename)
-{
+int checkExecutable(const char *filename) {
     int result;
     struct stat statinfo;
 
@@ -46,39 +45,52 @@ int checkExecutable(const char *filename)
     return statinfo.st_mode & S_IXOTH;
 }
 
-int findPath(char *pth, const char *exe)
-{
-    char *searchpath;
-    char *beg, *end;
+int findPath(char *pth, const char *exe) {
+    char *searchingPath;
+    char *begin, *end;
     int stop, found;
-    int len;
+    int length;
 
     if (strchr(exe, '/') != NULL) {
         if (realpath(exe, pth) == NULL) return 0;
-        return  checkExecutable(pth);
+        return checkExecutable(pth);
     }
 
-    searchpath = getenv("PATH");
-    if (searchpath == NULL) return 0;
-    if (strlen(searchpath) <= 0) return 0;
+    searchingPath = getenv("PATH");
 
-    beg = searchpath;
-    stop = 0; found = 0;
+    if (searchingPath == NULL) {
+        return 0;
+    }
+
+    if (strlen(searchingPath) <= 0) {
+        return 0;
+    }
+
+    begin = searchingPath;
+    stop = 0;
+    found = 0;
     do {
-        end = strchr(beg, ':');
+        end = strchr(begin, ':');
         if (end == NULL) {
             stop = 1;
-            strncpy(pth, beg, PATH_MAX);
-            len = strlen(pth);
+            strncpy(pth, begin, PATH_MAX);
+            length = strlen(pth);
         } else {
-            strncpy(pth, beg, end - beg);
-            pth[end - beg] = '\0';
-            len = end - beg;
+            strncpy(pth, begin, end - begin);
+            pth[end - begin] = '\0';
+            length = end - begin;
         }
-        if (pth[len - 1] != '/') strncat(pth, "/", 2);
-        strncat(pth, exe, PATH_MAX - len);
+
+        if (pth[length - 1] != '/') {
+            strncat(pth, "/", 2);
+        }
+
+        strncat(pth, exe, PATH_MAX - length);
         found = checkExecutable(pth);
-        if (!stop) beg = end + 1;
+
+        if (!stop) {
+            begin = end + 1;
+        }
     } while (!stop && !found);
 
     return found;
@@ -204,7 +216,7 @@ void setup(char inputBuffer[], char *args[], int *background) {
 } /* end of setup routine */
 
 void run_history(int index) {
-    char path[PATH_MAX+1];
+    char path[PATH_MAX + 1];
     char *exe;
     char *progpath;
 
@@ -224,7 +236,7 @@ void run_history(int index) {
     args[ct] = NULL;
 
     progpath = strdup(args[0]);
-    exe=args[0];
+    exe = args[0];
 
     int input_redirect = 0, output_redirect = 0, append_redirect = 0, error_redirect = 0;
     char *input_file = NULL, *output_file = NULL, *error_file = NULL;
@@ -252,7 +264,7 @@ void run_history(int index) {
         }
     }
 
-    if(!findPath(path, exe)){ /*Checks the existence of program*/
+    if (!findPath(path, exe)) { /*Checks the existence of program*/
         fprintf(stderr, "No executable \"%s\" found\n", exe);
         free(progpath);
     } else {
@@ -274,11 +286,11 @@ void run_history(int index) {
 
 int main(void) {
     int background;
-    char *args[MAX_LINE/2 + 1];
+    char *args[MAX_LINE / 2 + 1];
     int pid;
     signal(SIGTSTP, sigtstp_handler);
 
-    char path[PATH_MAX+1];
+    char path[PATH_MAX + 1];
     char *exe;
     char *progpath;
 
@@ -288,7 +300,7 @@ int main(void) {
         fflush(0);
         setup(inputBuffer, args, &background);
 
-        if(strcmp(args[0], "history") == 0) {
+        if (strcmp(args[0], "history") == 0) {
             if (args[1] && strcmp(args[1], "-i") == 0) {
                 int index = atoi(args[2]);
                 run_history(index);
@@ -317,9 +329,9 @@ int main(void) {
         }
 
         progpath = strdup(args[0]);
-        exe=args[0];
+        exe = args[0];
 
-        if(!findPath(path, exe)){ /*Checks the existence of program*/
+        if (!findPath(path, exe)) { /*Checks the existence of program*/
             fprintf(stderr, "No executable \"%s\" found\n", exe);
             free(progpath);
         } else {
@@ -407,7 +419,8 @@ void exitCall() {// check if there are any background processes still running
 }
 
 void
-ioRedirection(int input_redirect, int output_redirect, int append_redirect, int error_redirect, const char *input_file, const char *output_file, const char *error_file) {
+ioRedirection(int input_redirect, int output_redirect, int append_redirect, int error_redirect, const char *input_file,
+              const char *output_file, const char *error_file) {
     if (input_redirect) {
         int fd = open(input_file, O_RDONLY);
         if (fd == -1) {
@@ -419,7 +432,7 @@ ioRedirection(int input_redirect, int output_redirect, int append_redirect, int 
             exit(1);
         }
 
-        if(close(fd) == -1){
+        if (close(fd) == -1) {
             fprintf(stderr, "%s", "Failed to close the input file\n");
             exit(1);
         }
@@ -440,7 +453,7 @@ ioRedirection(int input_redirect, int output_redirect, int append_redirect, int 
             exit(1);
         }
 
-        if(close(fd) == -1){
+        if (close(fd) == -1) {
             fprintf(stderr, "%s", "Failed to close the input file\n");
             exit(1);
         }
@@ -456,7 +469,7 @@ ioRedirection(int input_redirect, int output_redirect, int append_redirect, int 
             exit(1);
         }
 
-        if(close(fd) == -1){
+        if (close(fd) == -1) {
             fprintf(stderr, "%s", "Failed to close the input file\n");
             exit(1);
         }
