@@ -21,6 +21,14 @@ pid_t background_pids[MAX_BACKGROUND_PROCESSES];
 // global counter for the number of background processes
 int background_count = 0;
 
+void fg(char *const *args);
+
+void
+ioRedirection(int input_redirect, int output_redirect, int append_redirect, int error_redirect, const char *input_file,
+              const char *output_file, const char *error_file);
+
+void exitCall();
+
 void sigtstp_handler(int sig) {
     printf("Received SIGTSTP signal\n");
 
@@ -104,7 +112,6 @@ void setup(char inputBuffer[], char *args[], int *background) {
         exit(-1);           /* terminate with error code of -1 */
     }
 
-    printf(">>%s<<", inputBuffer);
     for (i = 0; i < length; i++) { /* examine every character in the inputBuffer */
 
         switch (inputBuffer[i]) {
@@ -138,9 +145,6 @@ void setup(char inputBuffer[], char *args[], int *background) {
         } /* end of switch */
     }    /* end of for */
     args[ct] = NULL; /* just in case the input line was > 80 */
-
-    for (i = 0; i <= ct; i++)
-        printf("args %d = %s\n", i, args[i]);
 } /* end of setup routine */
 
 void run_history(int index) {
@@ -177,83 +181,42 @@ int main(void) {
     char *args[MAX_LINE/2 + 1];
     int pid;
     signal(SIGTSTP, sigtstp_handler);
-    int saved_stdout = dup(STDOUT_FILENO);
-    int saved_stderr = dup(STDERR_FILENO);
-    int saved_stdin = dup(STDIN_FILENO);
 
     while (1) {
         background = 0;
-        printf("myshell: ");
+        printf("%s", "myshell: ");
+        fflush(0);
         setup(inputBuffer, args, &background);
 
-        if (strcmp(args[0], "exit") == 0) {
-            // check if there are any background processes still running
-            int running_count = 0;
-            for (int i = 0; i < background_count; i++) {
-                int status;
-                pid_t pid = waitpid(background_pids[i], &status, WNOHANG);
-                if (pid == 0) {
-                    // background process is still running
-                    running_count++;
-                }
+        if(strcmp(args[0], "history") == 0) {
+            if (args[1] && strcmp(args[1], "-i") == 0) {
+                int index = atoi(args[2]);
+                run_history(index);
+            } else {
+                print_history();
             }
 
-            if (running_count > 0) {
-                // there are still background processes running
-                printf("There are still %d background processes running.\n", running_count);
-                printf("Please terminate all background processes before exiting.\n");
-                continue;
-            } else {
-                // no background processes are running, so exit the shell
-                exit(0);
-            }
+            continue;
         }
 
-        if (strcmp(args[0], "history") == 0 && args[1] && strcmp(args[1], "-i") == 0) {
-            int index = atoi(args[2]);
-            run_history(index);
-            continue;
-        } else if (strcmp(args[0], "history") == 0) {
-            print_history();
-            continue;
+        if (strcmp(args[0], "exit") == 0) {
+            exitCall();
+            add_to_history(args);
         }
 
         if (strcmp(args[0], "fg") == 0) {
-            // check if a process ID was specified
-            if (args[1] == NULL) {
-                printf("Error: no process ID specified\n");
-                continue;
-            }
-
-            // convert the process ID to an integer
-            int process_id = atoi(args[1]);
-
-            // check if the process ID is valid
-            int found = 0;
-            for (int i = 0; i < background_count; i++) {
-                if (background_pids[i] == process_id) {
-                    found = 1;
-                    break;
-                }
-            }
-            if (!found) {
-                printf("Error: invalid process ID\n");
-                continue;
-            }
-
-            // bring the specified background process to the foreground
-            int status;
-            kill(process_id, SIGCONT);
-            foreground_pid = process_id;
-            waitpid(process_id, &status, WUNTRACED);
+            add_to_history(args);
+            fg(args);
             continue;
         }
 
-
         if (strcmp(args[0], "jobs") == 0) {
+            add_to_history(args);
             list_background_processes();
             continue;
         }
+
+        add_to_history(args);
 
         int input_redirect = 0, output_redirect = 0, append_redirect = 0, error_redirect = 0;
 
@@ -282,65 +245,10 @@ int main(void) {
             }
         }
 
-        if (input_redirect) {
-            int fd = open(input_file, O_RDONLY);
-            if (fd == -1) {
-                perror("open");
-                exit(1);
-            }
-            if (dup2(fd, STDIN_FILENO) == -1) {
-                perror("dup2");
-                exit(1);
-            }
-
-            if(close(fd) == -1){
-                fprintf(stderr, "%s", "Failed to close the input file\n");
-                exit(1);
-            }
-        }
-        if (output_redirect) {
-            int fd;
-            if (append_redirect) {
-                fd = open(output_file, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
-            } else {
-                fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-            }
-            if (fd == -1) {
-                perror("open");
-                exit(1);
-            }
-            if (dup2(fd, STDOUT_FILENO) == -1) {
-                perror("dup2");
-                exit(1);
-            }
-
-            if(close(fd) == -1){
-                fprintf(stderr, "%s", "Failed to close the input file\n");
-                exit(1);
-            }
-        }
-        if (error_redirect) {
-            int fd = open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
-            if (fd == -1) {
-                perror("open");
-                exit(1);
-            }
-            if (dup2(fd, STDERR_FILENO) == -1) {
-                perror("dup2");
-                exit(1);
-            }
-
-            if(close(fd) == -1){
-                fprintf(stderr, "%s", "Failed to close the input file\n");
-                exit(1);
-            }
-        }
-
-
-        add_to_history(args);
         /* fork a child process to execute the command */
         pid = fork();
         if (pid == 0) {
+            ioRedirection(input_redirect, output_redirect, append_redirect, error_redirect, input_file, output_file, error_file);
             /* child process */
             /* execute the command */
             execvp(args[0], args);
@@ -362,16 +270,113 @@ int main(void) {
             /* error occurred while forking */
             perror("fork");
         }
-
-        // restore stdout and stderr to their default values
-        dup2(saved_stdout, STDOUT_FILENO);
-        dup2(saved_stderr, STDERR_FILENO);
-        dup2(saved_stdin, STDIN_FILENO);
-
-        // close the file descriptors
-        close(saved_stdout);
-        close(saved_stderr);
-        close(saved_stdin);
     }
-    return 0;
+}
+
+void exitCall() {// check if there are any background processes still running
+    int running_count = 0;
+    for (int i = 0; i < background_count; i++) {
+        int status;
+        pid_t pid = waitpid(background_pids[i], &status, WNOHANG);
+        if (pid == 0) {
+            // background process is still running
+            running_count++;
+        }
+    }
+
+    if (running_count > 0) {
+        // there are still background processes running
+        printf("There are still %d background processes running.\n", running_count);
+        printf("Please terminate all background processes before exiting.\n");
+        return;
+    } else {
+        // no background processes are running, so exit the shell
+        exit(0);
+    }
+}
+
+void
+ioRedirection(int input_redirect, int output_redirect, int append_redirect, int error_redirect, const char *input_file, const char *output_file, const char *error_file) {
+    if (input_redirect) {
+        int fd = open(input_file, O_RDONLY);
+        if (fd == -1) {
+            perror("open");
+            exit(1);
+        }
+        if (dup2(fd, STDIN_FILENO) == -1) {
+            perror("dup2");
+            exit(1);
+        }
+
+        if(close(fd) == -1){
+            fprintf(stderr, "%s", "Failed to close the input file\n");
+            exit(1);
+        }
+    }
+    if (output_redirect) {
+        int fd;
+        if (append_redirect) {
+            fd = open(output_file, O_WRONLY | O_CREAT | O_APPEND, S_IRUSR | S_IWUSR);
+        } else {
+            fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+        }
+        if (fd == -1) {
+            perror("open");
+            exit(1);
+        }
+        if (dup2(fd, STDOUT_FILENO) == -1) {
+            perror("dup2");
+            exit(1);
+        }
+
+        if(close(fd) == -1){
+            fprintf(stderr, "%s", "Failed to close the input file\n");
+            exit(1);
+        }
+    }
+    if (error_redirect) {
+        int fd = open(error_file, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+        if (fd == -1) {
+            perror("open");
+            exit(1);
+        }
+        if (dup2(fd, STDERR_FILENO) == -1) {
+            perror("dup2");
+            exit(1);
+        }
+
+        if(close(fd) == -1){
+            fprintf(stderr, "%s", "Failed to close the input file\n");
+            exit(1);
+        }
+    }
+}
+
+void fg(char *const *args) {// check if a process ID was specified
+    if (args[1] == NULL) {
+        printf("Error: no process ID specified\n");
+        return;
+    }
+
+    // convert the process ID to an integer
+    int process_id = atoi(args[1]);
+
+    // check if the process ID is valid
+    int found = 0;
+    for (int i = 0; i < background_count; i++) {
+        if (background_pids[i] == process_id) {
+            found = 1;
+            break;
+        }
+    }
+    if (!found) {
+        printf("Error: invalid process ID\n");
+        return;
+    }
+
+    // bring the specified background process to the foreground
+    int status;
+    kill(process_id, SIGCONT);
+    foreground_pid = process_id;
+    waitpid(process_id, &status, WUNTRACED);
 }
