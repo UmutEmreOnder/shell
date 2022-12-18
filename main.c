@@ -5,10 +5,12 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <sys/stat.h>
 
 #define MAX_LINE 80 /* 80 chars per line, per command, should be enough. */
 #define HISTORY_SIZE 10
 #define MAX_BACKGROUND_PROCESSES 100
+#define PATH_MAX 100
 
 char *history[HISTORY_SIZE];
 char inputBuffer[MAX_LINE]; /* buffer to hold command entered */
@@ -28,6 +30,60 @@ ioRedirection(int input_redirect, int output_redirect, int append_redirect, int 
               const char *output_file, const char *error_file);
 
 void exitCall();
+
+//This function takes a program name and check it if it is executable or not.
+int checkExecutable(const char *filename)
+{
+    int result;
+    struct stat statinfo;
+
+    result = stat(filename, &statinfo);
+    if (result < 0) return 0;
+    if (!S_ISREG(statinfo.st_mode)) return 0;
+
+    if (statinfo.st_uid == geteuid()) return statinfo.st_mode & S_IXUSR;
+    if (statinfo.st_gid == getegid()) return statinfo.st_mode & S_IXGRP;
+    return statinfo.st_mode & S_IXOTH;
+}
+
+int findPath(char *pth, const char *exe)
+{
+    char *searchpath;
+    char *beg, *end;
+    int stop, found;
+    int len;
+
+    if (strchr(exe, '/') != NULL) {
+        if (realpath(exe, pth) == NULL) return 0;
+        return  checkExecutable(pth);
+    }
+
+    searchpath = getenv("PATH");
+    if (searchpath == NULL) return 0;
+    if (strlen(searchpath) <= 0) return 0;
+
+    beg = searchpath;
+    stop = 0; found = 0;
+    do {
+        end = strchr(beg, ':');
+        if (end == NULL) {
+            stop = 1;
+            strncpy(pth, beg, PATH_MAX);
+            len = strlen(pth);
+        } else {
+            strncpy(pth, beg, end - beg);
+            pth[end - beg] = '\0';
+            len = end - beg;
+        }
+        if (pth[len - 1] != '/') strncat(pth, "/", 2);
+        strncat(pth, exe, PATH_MAX - len);
+        found = checkExecutable(pth);
+        if (!stop) beg = end + 1;
+    } while (!stop && !found);
+
+    return found;
+}
+
 
 void sigtstp_handler(int sig) {
     printf("Received SIGTSTP signal\n");
@@ -148,6 +204,10 @@ void setup(char inputBuffer[], char *args[], int *background) {
 } /* end of setup routine */
 
 void run_history(int index) {
+    char path[PATH_MAX+1];
+    char *exe;
+    char *progpath;
+
     if (index < 0 || index >= HISTORY_SIZE || !history[index]) {
         fprintf(stderr, "Invalid history index\n");
         return;
@@ -163,16 +223,52 @@ void run_history(int index) {
     }
     args[ct] = NULL;
 
-    int pid = fork();
-    if (pid == 0) {
-        execvp(args[0], args);
-        perror("execvp");
-        exit(1);
-    } else if (pid > 0) {
-        int status;
-        waitpid(pid, &status, 0);
+    progpath = strdup(args[0]);
+    exe=args[0];
+
+    int input_redirect = 0, output_redirect = 0, append_redirect = 0, error_redirect = 0;
+    char *input_file = NULL, *output_file = NULL, *error_file = NULL;
+    int i;
+    for (i = 0; args[i] != NULL; i++) {
+        if (strcmp(args[i], "<") == 0) {
+            input_redirect = 1;
+            input_file = args[i + 1];
+
+            for (int j = i; args[j] != NULL; j++) {
+                args[j] = args[j + 2];
+            }
+        } else if (strcmp(args[i], ">") == 0) {
+            output_redirect = 1;
+            output_file = args[i + 1];
+            args[i] = NULL;
+        } else if (strcmp(args[i], ">>") == 0) {
+            append_redirect = 1;
+            output_file = args[i + 1];
+            args[i] = NULL;
+        } else if (strcmp(args[i], "2>") == 0) {
+            error_redirect = 1;
+            error_file = args[i + 1];
+            args[i] = NULL;
+        }
+    }
+
+    if(!findPath(path, exe)){ /*Checks the existence of program*/
+        fprintf(stderr, "No executable \"%s\" found\n", exe);
+        free(progpath);
     } else {
-        perror("fork");
+        int pid = fork();
+        if (pid == 0) {
+            ioRedirection(input_redirect, output_redirect, append_redirect, error_redirect, input_file, output_file, error_file);
+
+            execv(path, args);
+            perror("execvp");
+            exit(1);
+        } else if (pid > 0) {
+            int status;
+            waitpid(pid, &status, 0);
+        } else {
+            perror("fork");
+        }
     }
 }
 
@@ -181,6 +277,10 @@ int main(void) {
     char *args[MAX_LINE/2 + 1];
     int pid;
     signal(SIGTSTP, sigtstp_handler);
+
+    char path[PATH_MAX+1];
+    char *exe;
+    char *progpath;
 
     while (1) {
         background = 0;
@@ -216,60 +316,71 @@ int main(void) {
             continue;
         }
 
-        add_to_history(args);
+        progpath = strdup(args[0]);
+        exe=args[0];
 
-        int input_redirect = 0, output_redirect = 0, append_redirect = 0, error_redirect = 0;
-
-        char *input_file = NULL, *output_file = NULL, *error_file = NULL;
-        int i;
-        for (i = 0; args[i] != NULL; i++) {
-            if (strcmp(args[i], "<") == 0) {
-                input_redirect = 1;
-                input_file = args[i + 1];
-
-                for (int j = i; args[j] != NULL; j++) {
-                    args[j] = args[j + 2];
-                }
-            } else if (strcmp(args[i], ">") == 0) {
-                output_redirect = 1;
-                output_file = args[i + 1];
-                args[i] = NULL;
-            } else if (strcmp(args[i], ">>") == 0) {
-                append_redirect = 1;
-                output_file = args[i + 1];
-                args[i] = NULL;
-            } else if (strcmp(args[i], "2>") == 0) {
-                error_redirect = 1;
-                error_file = args[i + 1];
-                args[i] = NULL;
-            }
-        }
-
-        /* fork a child process to execute the command */
-        pid = fork();
-        if (pid == 0) {
-            ioRedirection(input_redirect, output_redirect, append_redirect, error_redirect, input_file, output_file, error_file);
-            /* child process */
-            /* execute the command */
-            execvp(args[0], args);
-            perror("execvp");
-            exit(1);
-        } else if (pid > 0) {
-            /* parent process */
-            if (background == 0) {
-                foreground_pid = pid;
-                /* foreground process, wait for it to finish */
-                int status;
-                waitpid(pid, &status, WUNTRACED);
-            } else {
-                /* background process, don't wait for it to finish */
-                printf("Background process %d started\n", pid);
-                background_pids[background_count++] = pid;
-            }
+        if(!findPath(path, exe)){ /*Checks the existence of program*/
+            fprintf(stderr, "No executable \"%s\" found\n", exe);
+            free(progpath);
         } else {
-            /* error occurred while forking */
-            perror("fork");
+            add_to_history(args);
+
+            int input_redirect = 0, output_redirect = 0, append_redirect = 0, error_redirect = 0;
+
+            char *input_file = NULL, *output_file = NULL, *error_file = NULL;
+            int i;
+            for (i = 0; args[i] != NULL; i++) {
+                if (strcmp(args[i], "<") == 0) {
+                    input_redirect = 1;
+                    input_file = args[i + 1];
+
+                    for (int j = i; args[j] != NULL; j++) {
+                        args[j] = args[j + 2];
+                    }
+                } else if (strcmp(args[i], ">") == 0) {
+                    output_redirect = 1;
+                    output_file = args[i + 1];
+                    args[i] = NULL;
+                } else if (strcmp(args[i], ">>") == 0) {
+                    append_redirect = 1;
+                    output_file = args[i + 1];
+                    args[i] = NULL;
+                } else if (strcmp(args[i], "2>") == 0) {
+                    error_redirect = 1;
+                    error_file = args[i + 1];
+                    args[i] = NULL;
+                }
+            }
+
+            /* fork a child process to execute the command */
+            pid = fork();
+            if (pid == 0) {
+                ioRedirection(input_redirect, output_redirect, append_redirect, error_redirect, input_file, output_file,
+                              error_file);
+                /* child process */
+                /* execute the command */
+                execv(path, args);
+                perror("execvp");
+                exit(1);
+            } else if (pid > 0) {
+                /* parent process */
+                if (background == 0) {
+                    foreground_pid = pid;
+                    /* foreground process, wait for it to finish */
+                    int status;
+                    waitpid(pid, &status, WUNTRACED);
+                } else {
+                    /* background process, don't wait for it to finish */
+                    printf("Background process %d started\n", pid);
+                    background_pids[background_count++] = pid;
+                }
+            } else {
+                /* error occurred while forking */
+                perror("fork");
+            }
         }
+
+        path[0] = '\0';
     }
 }
 
